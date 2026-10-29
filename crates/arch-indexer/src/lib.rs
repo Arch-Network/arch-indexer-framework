@@ -1,11 +1,13 @@
 //! Framework for Arch program indexers over arch-rust-indexer's program export.
 //!
 //! A program implements [`ProgramIndexer`] (decoder, persistence, schema,
-//! sampling, routes, metrics); the runtime owns everything around it: paging
-//! the export from per-cursor checkpoints, confirmation gating, replays gated
-//! by the indexer's data revision, scan marks, mint decimals, unknown-
-//! instruction markers, the sampler and enricher loops, namespaced migrations
-//! and the HTTP scaffolding. A service binary is one call:
+//! sampling, price derivation, enrichment, routes, metrics, day-export
+//! facts); the runtime owns everything around it: paging the export from
+//! per-cursor checkpoints, confirmation gating, replays gated by the
+//! indexer's data revision, scan marks, mint decimals, unknown-instruction
+//! markers, the price spine and its feeds ([`prices`]), the sampler and
+//! enricher loops, namespaced migrations and the HTTP scaffolding. A service
+//! binary is one call:
 //!
 //! ```text
 //! arch_indexer::run(
@@ -23,10 +25,14 @@ pub mod build_info;
 pub mod checkpoints;
 pub mod config;
 pub mod db;
+pub mod enrich;
 pub mod explorer;
+pub mod export;
 pub mod host;
 pub mod http;
 pub mod indexer;
+pub mod portfolio;
+pub mod prices;
 pub mod runner;
 pub mod sampler;
 pub mod store;
@@ -43,6 +49,7 @@ pub use db::{PgPool, PgTransaction};
 pub use explorer::ExplorerClient;
 pub use host::{run, Host, Mode};
 pub use indexer::{ApiState, BackgroundTask, BoxFuture, Ctx, DynIndexer, ProgramIndexer, Routes};
+pub use prices::PriceCtx;
 
 /// The versions the trait's signatures are written against; a program crate
 /// can name them through these rather than pinning its own.

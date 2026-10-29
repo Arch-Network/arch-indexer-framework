@@ -110,7 +110,8 @@ pub async fn sync_status(State(state): State<HostState>) -> ApiResult {
 }
 
 /// Prometheus text format: the runtime's service-health gauges, then each
-/// indexer's `metrics` lines.
+/// indexer's `metrics` lines, regrouped so every family is declared once
+/// ([`super::prometheus::group_families`]).
 pub async fn prometheus_metrics(
     State(state): State<HostState>,
 ) -> Result<String, (StatusCode, String)> {
@@ -121,36 +122,36 @@ pub async fn prometheus_metrics(
             .await
             .map_err(internal)?;
     }
-    Ok(out)
+    Ok(super::prometheus::group_families(&out))
 }
 
+/// The runtime's families, named `<METRICS_PREFIX>_…` (`apa_…` by default,
+/// arch-prime-analytics' names).
 async fn service_health(state: &HostState, out: &mut String) -> anyhow::Result<()> {
     let pool = &state.api.pool;
+    let p = &*state.metrics_prefix;
     // Constant-1 gauge whose LABELS carry the payload — the Prometheus idiom
     // for build metadata, so a chart can be annotated where the build changed.
     let b = &state.build;
-    out.push_str("# TYPE program_indexer_build_info gauge\n");
+    writeln!(out, "# TYPE {p}_build_info gauge")?;
     writeln!(
         out,
-        "program_indexer_build_info{{service=\"{}\",version=\"{}\",commit=\"{}\",network=\"{}\"}} 1",
+        "{p}_build_info{{service=\"{}\",version=\"{}\",commit=\"{}\",network=\"{}\"}} 1",
         b.service, b.version, b.git_sha, state.network
     )?;
-    out.push_str("# TYPE program_indexer_data_revision gauge\n");
+    writeln!(out, "# TYPE {p}_data_revision gauge")?;
     for ix in state.indexers.iter() {
         writeln!(
             out,
-            "program_indexer_data_revision{{indexer=\"{}\"}} {}",
+            "{p}_data_revision{{indexer=\"{}\"}} {}",
             ix.id(),
             ix.data_revision()
         )?;
     }
     if let Ok(versions) = crate::db::schema_versions(pool).await {
-        out.push_str("# TYPE program_indexer_schema_version gauge\n");
+        writeln!(out, "# TYPE {p}_schema_version gauge")?;
         for (namespace, v) in versions {
-            writeln!(
-                out,
-                "program_indexer_schema_version{{namespace=\"{namespace}\"}} {v}"
-            )?;
+            writeln!(out, "{p}_schema_version{{namespace=\"{namespace}\"}} {v}")?;
         }
     }
 
@@ -162,17 +163,11 @@ async fn service_health(state: &HostState, out: &mut String) -> anyhow::Result<(
     .bind(state.checkpoint_keys.as_slice())
     .fetch_all(pool)
     .await?;
-    out.push_str("# TYPE program_indexer_checkpoint_height gauge\n");
-    out.push_str("# TYPE program_indexer_checkpoint_age_seconds gauge\n");
+    writeln!(out, "# TYPE {p}_checkpoint_height gauge")?;
+    writeln!(out, "# TYPE {p}_checkpoint_age_seconds gauge")?;
     for (name, height, age) in &checkpoints {
-        writeln!(
-            out,
-            "program_indexer_checkpoint_height{{source=\"{name}\"}} {height}"
-        )?;
-        writeln!(
-            out,
-            "program_indexer_checkpoint_age_seconds{{source=\"{name}\"}} {age}"
-        )?;
+        writeln!(out, "{p}_checkpoint_height{{source=\"{name}\"}} {height}")?;
+        writeln!(out, "{p}_checkpoint_age_seconds{{source=\"{name}\"}} {age}")?;
     }
 
     // Decoder gaps: an instruction the decoder recognized as its program's but
@@ -188,11 +183,11 @@ async fn service_health(state: &HostState, out: &mut String) -> anyhow::Result<(
     .bind(&ids)
     .fetch_all(pool)
     .await?;
-    out.push_str("# TYPE program_indexer_decoder_unknown_total counter\n");
+    writeln!(out, "# TYPE {p}_decoder_unknown_total counter")?;
     for (decoder, disc, n) in &unknowns {
         writeln!(
             out,
-            "program_indexer_decoder_unknown_total{{decoder=\"{decoder}\",discriminator=\"{disc}\"}} {n}"
+            "{p}_decoder_unknown_total{{decoder=\"{decoder}\",discriminator=\"{disc}\"}} {n}"
         )?;
     }
 
@@ -200,14 +195,8 @@ async fn service_health(state: &HostState, out: &mut String) -> anyhow::Result<(
     // unstable keys (e.g. a jittery `from`) and the cache is doing nothing.
     let hits = cache::CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed);
     let misses = cache::CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed);
-    out.push_str("# TYPE program_indexer_cache_requests_total counter\n");
-    writeln!(
-        out,
-        "program_indexer_cache_requests_total{{result=\"hit\"}} {hits}"
-    )?;
-    writeln!(
-        out,
-        "program_indexer_cache_requests_total{{result=\"miss\"}} {misses}"
-    )?;
+    writeln!(out, "# TYPE {p}_cache_requests_total counter")?;
+    writeln!(out, "{p}_cache_requests_total{{result=\"hit\"}} {hits}")?;
+    writeln!(out, "{p}_cache_requests_total{{result=\"miss\"}} {misses}")?;
     Ok(())
 }

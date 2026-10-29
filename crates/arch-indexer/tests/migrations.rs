@@ -25,13 +25,23 @@ async fn indexers_number_their_migrations_independently() {
     let test = TestDb::new("migrations_test").await;
     let pool = test.pool.clone();
     // An existing analytics database already has the runtime's tables, with
-    // data: the runtime adopts them as they stand.
+    // data, and so may a program crate's baseline (`price_candles`, with the
+    // named constraint `pg_dump` writes): the runtime adopts them as they
+    // stand.
     sqlx::raw_sql(
         "CREATE TABLE checkpoints (
              name text PRIMARY KEY,
              block_height bigint NOT NULL DEFAULT 0,
              updated_at timestamptz NOT NULL DEFAULT now());
-         INSERT INTO checkpoints (name, block_height) VALUES ('clamm', 77);",
+         INSERT INTO checkpoints (name, block_height) VALUES ('clamm', 77);
+         CREATE TABLE price_candles (
+             mint text NOT NULL,
+             \"interval\" text NOT NULL,
+             bucket_ts timestamp with time zone NOT NULL,
+             close_usd numeric NOT NULL,
+             source text NOT NULL,
+             CONSTRAINT price_candles_pkey PRIMARY KEY (mint, \"interval\", bucket_ts));
+         INSERT INTO price_candles VALUES ('btc', '1h', '2026-08-25T00:00:00Z', 64000, 'pyth');",
     )
     .execute(&pool)
     .await
@@ -53,6 +63,7 @@ async fn indexers_number_their_migrations_independently() {
             ("other".into(), 1),
             ("other".into(), 2),
             ("runtime".into(), 1),
+            ("runtime".into(), 2),
         ]
     );
     assert_eq!(
@@ -60,7 +71,7 @@ async fn indexers_number_their_migrations_independently() {
         vec![
             ("example".into(), 1),
             ("other".into(), 2),
-            ("runtime".into(), 1)
+            ("runtime".into(), 2)
         ]
     );
     let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM other_rows")
@@ -73,6 +84,12 @@ async fn indexers_number_their_migrations_independently() {
         .await
         .unwrap();
     assert_eq!(kept, 77);
+    let candle: (f64, String) =
+        sqlx::query_as("SELECT close_usd::float8, source FROM price_candles WHERE mint = 'btc'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(candle, (64000.0, "pyth".into()));
     for table in [
         "scan_marks",
         "replay_requests",

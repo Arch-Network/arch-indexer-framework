@@ -12,7 +12,7 @@
 //! ignored by the handlers, so they must not fragment the key either. Cache
 //! effectiveness still depends on callers sending stable values (arch-swap
 //! rounds chart `from` to the bucket boundary; a jittery millisecond `from`
-//! would key every request uniquely and never hit). The `program_indexer_cache_*` counters
+//! would key every request uniquely and never hit). The `<METRICS_PREFIX>_cache_*` counters
 //! in `/metrics` make a 0%-hit-rate regression visible instead of silent.
 
 use axum::{

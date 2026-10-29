@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::db::{self, PgPool};
 use crate::explorer::ExplorerClient;
 use crate::indexer::{validate, ApiState, BoxFuture, Ctx, DynIndexer};
+use crate::prices::FeedSync;
 use crate::runner::Runner;
 use crate::sampler::{Enricher, Sampler};
 use anyhow::Context;
@@ -144,6 +145,16 @@ impl Host {
         }
     }
 
+    /// The enrich pass over `ctx`: feed candles from `PRICE_FEEDS`, then
+    /// every indexer's `derive_prices`, then every indexer's `enrich`.
+    pub fn enricher(&self, ctx: Ctx) -> Enricher {
+        Enricher {
+            ctx,
+            indexers: self.indexers.clone(),
+            feeds: FeedSync::from_config(&self.config),
+        }
+    }
+
     /// The HTTP API over `serving_pool` (use [`db::connect_serving`]).
     pub fn router(&self, serving_pool: PgPool) -> axum::Router {
         crate::http::router(
@@ -185,12 +196,7 @@ impl Host {
                 self.prepare(&runner.ctx()).await?;
                 let written = runner.catch_up().await?;
                 tracing::info!(rows = written, "backfill complete; running one enrich pass");
-                Enricher {
-                    ctx: runner.ctx(),
-                    indexers: self.indexers.clone(),
-                }
-                .enrich_once()
-                .await;
+                self.enricher(runner.ctx()).enrich_once().await;
                 Ok(())
             }
             Mode::Api => {
@@ -230,10 +236,7 @@ impl Host {
             "sampler",
             Box::pin(async move { sampler.run_forever(sample_interval).await }),
         ));
-        let enricher = Enricher {
-            ctx: ctx.clone(),
-            indexers: self.indexers.clone(),
-        };
+        let enricher = self.enricher(ctx.clone());
         let enrich_interval = Duration::from_secs(self.config.enrich_interval_secs);
         tasks.push((
             "enricher",

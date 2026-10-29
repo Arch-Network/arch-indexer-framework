@@ -303,7 +303,7 @@ async fn an_example_indexer_runs_end_to_end() {
     assert_eq!(body["network"], json!("default"));
     assert_eq!(
         body["schema_versions"],
-        json!({ "example": 1, "runtime": 1 })
+        json!({ "example": 1, "runtime": 2 })
     );
     assert_eq!(
         body["indexers"],
@@ -314,10 +314,10 @@ async fn an_example_indexer_runs_end_to_end() {
     assert_eq!(status, StatusCode::OK);
     let metrics = metrics.as_str().unwrap();
     for line in [
-        format!("program_indexer_checkpoint_height{{source=\"{key}\"}} 20"),
-        "program_indexer_decoder_unknown_total{decoder=\"example\",discriminator=\"09\"} 1".into(),
-        "program_indexer_data_revision{indexer=\"example\"} 1".into(),
-        "program_indexer_schema_version{namespace=\"example\"} 1".into(),
+        format!("apa_checkpoint_height{{source=\"{key}\"}} 20"),
+        "apa_decoder_unknown_total{decoder=\"example\",discriminator=\"09\"} 1".into(),
+        "apa_data_revision{indexer=\"example\"} 1".into(),
+        "apa_schema_version{namespace=\"example\"} 1".into(),
         "example_transfers_total 2".into(),
     ] {
         assert!(metrics.lines().any(|l| l == line), "{line} in\n{metrics}");
