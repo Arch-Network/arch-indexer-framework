@@ -1,0 +1,131 @@
+name: Publish
+
+# Publishes each crate whose Cargo.toml version crates.io does not have yet.
+# Releasing is: bump the workspace "version" in a PR, merge it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      core_version: ${{ steps.version.outputs.core_version }}
+      core_publish: ${{ steps.version.outputs.core_publish }}
+      core_release: ${{ steps.version.outputs.core_release }}
+      main_version: ${{ steps.version.outputs.main_version }}
+      main_publish: ${{ steps.version.outputs.main_publish }}
+      main_release: ${{ steps.version.outputs.main_release }}
+      any_publish: ${{ steps.version.outputs.any_publish }}
+    env:
+      ARCH_INDEXER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/arch_indexer_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arch_indexer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arch_indexer_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata=$(cargo metadata --no-deps --format-version 1 --locked)
+          any_publish=false
+          for pair in core:arch-indexer-core main:arch-indexer; do
+            key=${pair%%:*}
+            name=${pair#*:}
+            version=$(jq -r --arg n "$name" '.packages[] | select(.name == $n) | .version' <<<"$metadata")
+            echo "${key}_version=$version" >> "$GITHUB_OUTPUT"
+            # 200: published; 404: not yet. Anything else stops the run rather
+            # than guessing.
+            status=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -A "${GITHUB_REPOSITORY} publish workflow" \
+              "https://crates.io/api/v1/crates/$name/$version")
+            case "$status" in
+              200) echo "${key}_publish=false" >> "$GITHUB_OUTPUT" ;;
+              404) echo "${key}_publish=true" >> "$GITHUB_OUTPUT"; any_publish=true ;;
+              *) echo "::error::crates.io answered $status for $name@$version"; exit 1 ;;
+            esac
+            if gh release view "$name-v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "${key}_release=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "${key}_release=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          echo "any_publish=$any_publish" >> "$GITHUB_OUTPUT"
+
+      - if: steps.version.outputs.any_publish == 'true'
+        run: cargo test --workspace --locked -- --include-ignored
+
+  publish:
+    needs: check
+    if: needs.check.outputs.any_publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # arch-indexer depends on arch-indexer-core by version, so core goes
+      # first. `cargo publish` waits until the published version is in the
+      # index before it returns, so the second publish resolves it.
+      - if: needs.check.outputs.core_publish == 'true'
+        run: cargo publish --locked -p arch-indexer-core
+
+      - if: needs.check.outputs.main_publish == 'true'
+        run: cargo publish --locked -p arch-indexer
+
+  release:
+    needs: [check, publish]
+    if: always() && needs.check.result == 'success' && (needs.publish.result == 'success' || needs.check.outputs.any_publish == 'false')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - if: needs.check.outputs.core_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: arch-indexer-core-v${{ needs.check.outputs.core_version }}
+        run: gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest=false
+
+      - if: needs.check.outputs.main_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: arch-indexer-v${{ needs.check.outputs.main_version }}
+        run: gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --generate-notes

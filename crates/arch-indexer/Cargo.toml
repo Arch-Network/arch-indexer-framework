@@ -1,0 +1,42 @@
+[package]
+name = "arch-indexer"
+description = "Framework for Arch program indexers over arch-rust-indexer: the ProgramIndexer trait, ingest runner, checkpoints and replays, per-program migrations and the HTTP host"
+keywords = ["arch", "bitcoin", "indexer", "postgres", "blockchain"]
+categories = ["database", "web-programming::http-server"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[dependencies]
+arch-indexer-core.workspace = true
+anyhow.workspace = true
+axum = "0.8"
+bigdecimal = { version = "0.4", features = ["serde"] }
+bs58.workspace = true
+chrono.workspace = true
+hex.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring-native-roots",
+    "postgres",
+    "chrono",
+    "bigdecimal",
+    "migrate",
+    "macros",
+    "json",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "net"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+# Paused time, so the gate tests run through its wait instantly.
+tokio = { version = "1", features = ["test-util"] }
