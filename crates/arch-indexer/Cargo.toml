@@ -1,0 +1,37 @@
+[package]
+name = "arch-program-indexer"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime for per-program indexers over the arch-rust-indexer export: ingest, checkpoints, sampling and HTTP around a ProgramIndexer"
+publish = false
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+bigdecimal = { version = "0.4", features = ["serde"] }
+bs58 = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring-native-roots",
+    "postgres",
+    "chrono",
+    "bigdecimal",
+    "migrate",
+    "macros",
+    "json",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "net"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+# Paused time, so the gate tests run through its wait instantly.
+tokio = { version = "1", features = ["test-util"] }
