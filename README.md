@@ -40,9 +40,9 @@ A program repo usually splits the same way:
 
 ```toml
 [dependencies]
-arch-indexer = "0.1"
+arch-indexer = "0.2"
 # A decoder-only crate needs just:
-# arch-indexer-core = "0.1"
+# arch-indexer-core = "0.2"
 
 # For `sqlx::migrate!` and your own queries; same 0.8 line, so Cargo unifies it.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "chrono", "bigdecimal", "migrate", "macros", "json"] }
