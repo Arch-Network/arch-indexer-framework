@@ -4,7 +4,8 @@ A framework for Arch program indexers. You write the program-specific part (deco
 
 - paging, checkpoints, confirmation gating and replays
 - per-program Postgres migrations
-- sampler and enricher loops
+- a price spine (`price_candles`, `PRICE_FEEDS` sync) and an enricher that runs feeds, then each indexer's price derivation, then each indexer's enrichment
+- day-export helpers (one snapshot, completeness proof, per-indexer facts and holdings)
 - an HTTP API with health, version, sync status, response cache, concurrency gates and Prometheus metrics
 
 ## Where it sits
@@ -39,9 +40,9 @@ A program repo usually splits the same way:
 
 ```toml
 [dependencies]
-arch-indexer = "0.1"
+arch-indexer = "0.2"
 # A decoder-only crate needs just:
-# arch-indexer-core = "0.1"
+# arch-indexer-core = "0.2"
 
 # For `sqlx::migrate!` and your own queries; same 0.8 line, so Cargo unifies it.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "chrono", "bigdecimal", "migrate", "macros", "json"] }
@@ -148,10 +149,42 @@ pub trait ProgramIndexer: Send + Sync + 'static {
         async { Ok(0) }
     }
 
-    /// Derivation over rows already stored (flows, rates, any column filled
-    /// after ingest), every `ENRICH_INTERVAL_SECS` and once at the end of a
-    /// `backfill`, so a fresh backfill is immediately queryable. An error is
-    /// logged; the next tick runs regardless.
+    /// The earliest instant this indexer holds activity for (its first
+    /// event's `ts`), `None` while it holds none. The minimum across a
+    /// host's indexers anchors a price feed's cold start.
+    fn earliest_activity(
+        &self,
+        pool: &PgPool,
+    ) -> impl Future<Output = anyhow::Result<Option<DateTime<Utc>>>> + Send {
+        let _ = pool;
+        async { Ok(None) }
+    }
+
+    /// The mints this indexer's `derive_prices` prices (e.g. every vault
+    /// share mint), lowercase hex. The other indexers receive them in
+    /// `PriceCtx::claimed_mints`.
+    fn priced_mints(&self, ctx: &Ctx) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send {
+        let _ = ctx;
+        async { Ok(Vec::new()) }
+    }
+
+    /// Write `price_candles` for mints this indexer prices from its own state,
+    /// never one in `prices.feed_mints` or `prices.claimed_mints`. Runs after
+    /// the runtime's feed sync and before any indexer's `enrich`.
+    fn derive_prices(
+        &self,
+        ctx: &Ctx,
+        prices: &PriceCtx,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
+        let _ = (ctx, prices);
+        async { Ok(()) }
+    }
+
+    /// Derivation over rows already stored (flows, rates, USD stamps from
+    /// `price_candles`, any column filled after ingest), every
+    /// `ENRICH_INTERVAL_SECS` after every indexer's `derive_prices`, and once
+    /// at the end of a `backfill`. An error is logged; the next tick runs
+    /// regardless.
     fn enrich(&self, ctx: &Ctx) -> impl Future<Output = anyhow::Result<()>> + Send {
         let _ = ctx;
         async { Ok(()) }
@@ -169,7 +202,8 @@ pub trait ProgramIndexer: Send + Sync + 'static {
         Routes::default()
     }
 
-    /// Append Prometheus text-format lines to `/metrics`.
+    /// Append Prometheus text-format lines to `/metrics`. The runtime groups
+    /// the scrape by family and keeps one `# HELP`/`# TYPE` per family.
     fn metrics(
         &self,
         pool: &PgPool,
@@ -177,6 +211,43 @@ pub trait ProgramIndexer: Send + Sync + 'static {
     ) -> impl Future<Output = anyhow::Result<()>> + Send {
         let _ = (pool, out);
         async { Ok(()) }
+    }
+
+    /// Why the day ending at `end` is not complete in this indexer's data
+    /// beyond the runtime's checks, or `None`. Reads through `tx`.
+    fn day_incomplete(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        end: DateTime<Utc>,
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
+        let _ = (tx, end);
+        async { Ok(None) }
+    }
+
+    /// This indexer's facts of `[start, end)`, by top-level key, each query
+    /// limited to `cap` rows. Reads through `tx`.
+    fn day_facts(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> impl Future<Output = anyhow::Result<DayFacts>> + Send {
+        let _ = (tx, start, end, cap);
+        async { Ok(DayFacts::default()) }
+    }
+
+    /// What each wallet held in this indexer's venues over `[start, end)`,
+    /// the first `cap` rows in `(wallet, venue, address, side)` order.
+    fn day_holdings(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> impl Future<Output = anyhow::Result<Vec<Holding>>> + Send {
+        let _ = (tx, start, end, cap);
+        async { Ok(Vec::new()) }
     }
 }
 ```
@@ -187,7 +258,8 @@ The values the hooks receive:
 
 ```rust
 /// What the ingest-side hooks (`prepare`, `sample`, `on_activity`,
-/// `background`) work with: the unbounded ingest pool and the indexer client.
+/// `priced_mints`, `derive_prices`, `enrich`, `background`) work with: the
+/// unbounded ingest pool and the indexer client.
 #[derive(Clone)]
 pub struct Ctx {
     pub pool: PgPool,
@@ -302,7 +374,7 @@ async fn main() -> anyhow::Result<()> {
 | `all` (default) | `prepare`, then in one process: the tail (`on_activity` after each pass), the sampler, the enricher, `background` tasks and the HTTP API |
 | `api` | HTTP API only, on the serving pool (15 s statement timeout) |
 | `ingest` | tail, sampler, enricher and background tasks; no HTTP |
-| `backfill` | `prepare`, one catch-up pass to the tip (or `INGEST_END_HEIGHT`), one `enrich` pass, then exit |
+| `backfill` | `prepare`, one catch-up pass to the tip (or `INGEST_END_HEIGHT`), one enrich pass (feeds, `derive_prices`, `enrich`), then exit |
 | `delete-tx <txid>` | every indexer's `delete_tx` plus the txid's `decoder_unknowns` rows, in one database transaction; for a transaction rolled back after it was ingested |
 
 How it stops:
@@ -312,7 +384,7 @@ How it stops:
 `build_info!()` captures the **binary's** package name and version, plus the commit from `RAILWAY_GIT_COMMIT_SHA` or `GIT_SHA`. `GIT_SHA` can come from the build environment, or from your build script via `cargo:rustc-env=GIT_SHA=…`. The result is served as the `x-indexer-version` header on every response and returned by `/v1/version`.
 
 `Host::new(build, config, indexers)` exposes the parts for tests and custom wiring:
-- `.migrate(&pool)`, `.prepare(&ctx)`, `.runner(pool)`, `.router(serving_pool)`, `.run(&self, Mode)`
+- `.migrate(&pool)`, `.prepare(&ctx)`, `.runner(pool)`, `.enricher(ctx)`, `.router(serving_pool)`, `.run(&self, Mode)`
 - it refuses ids that are malformed, duplicated or `runtime`, program ids that are not 64 lowercase hex, and duplicate checkpoint keys
 
 ### HTTP
@@ -321,7 +393,7 @@ The runtime serves:
 - `/healthz` and `/readyz` (the latter checks the database)
 - `/v1/version`: build, network, schema version per migration namespace, and data revision per indexer
 - `/v1/sync-status`: checkpoints, scan-mark tips and standing replays
-- `/metrics`: Prometheus text, i.e. the `program_indexer_*` service gauges followed by each indexer's `metrics` lines
+- `/metrics`: Prometheus text: the runtime's `<METRICS_PREFIX>_*` families (`apa_build_info`, `apa_data_revision`, `apa_schema_version`, `apa_checkpoint_height`, `apa_checkpoint_age_seconds`, `apa_decoder_unknown_total`, `apa_cache_requests_total` by default), then each indexer's `metrics` lines. The whole scrape is regrouped by family, one `# HELP`/`# TYPE` each, so indexers sharing a host may declare the same family.
 
 Each indexer's `Routes` are mounted by group:
 
@@ -359,15 +431,20 @@ Helpers for route handlers:
 | `CACHE_TTL_SECS` | 30 | Response cache TTL; 0 disables it. |
 | `API_QUERY_CONCURRENCY` | 3 | Permits of the `cached` group. |
 | `API_PORTFOLIO_CONCURRENCY` | 2 | Permits of the `per_address` group. |
+| `PRICE_FEEDS` | `{}` | JSON object, mint (hex, lowercased) → `coinbase:<product-id>` or `const:<usd>`. The runtime writes these mints' candles. |
+| `COINBASE_API_URL` | `https://api.exchange.coinbase.com` | Coinbase Exchange API for `coinbase:` feeds. |
+| `METRICS_PREFIX` | `apa` | Prefix of the runtime's metric families; `[a-zA-Z_][a-zA-Z0-9_]*`. |
 | `RUST_LOG` | `info` | Tracing filter. |
 
 Each indexer reads its own program ids and other settings in its constructor. `arch_indexer::config::{optional_program_id, required_program_id}` normalize a value to 64 lowercase hex and refuse anything else.
+
+`Config::from_env()` reads the table above. A host or test that builds its configuration in code starts from the defaults, so a release that adds a setting does not break it: `Config { cache_ttl_secs: 0, ..Config::new(database_url, indexer_base_url) }`.
 
 ## Migrations and namespaces
 
 - **Where they live:** put the program's schema in your crate's `migrations/` as a normal sqlx set numbered from `0001`, and return it from `migrator()`: `static MIGRATOR: Migrator = sqlx::migrate!("./migrations");`.
 - **How they are recorded:** each set is applied under namespace = `id()` and recorded in `program_indexer_migrations (namespace, version, …)`, never in sqlx's `_sqlx_migrations`. Several indexers can therefore share one database even though all of them number from 1.
-- **Order:** the runtime's own namespace `runtime` runs first. It holds `checkpoints`, `scan_marks`, `replay_requests`, `mint_decimals` and `decoder_unknowns`. Each indexer follows, in registration order.
+- **Order:** the runtime's own namespace `runtime` runs first. It holds `checkpoints`, `scan_marks`, `replay_requests`, `mint_decimals`, `decoder_unknowns` and `price_candles`. Each indexer follows, in registration order.
 - **Transactions and locking:** each migration runs in its own transaction unless the file is marked `-- no-transaction`. A per-schema advisory lock serializes concurrent boots.
 - **Refusals:** a migration edited after it was applied stops the boot. So does an applied version missing from the set, unless the `Migrator` sets `ignore_missing`. Never edit a merged migration; add a new one.
 - **Table names are global:** never create a table the runtime owns, and keep each program's table names distinct.
@@ -394,6 +471,30 @@ In the same change, bump `data_revision()` to at least `<rev>`. Then:
 - **Several program ids:** override `checkpoint_key(program_id)`, for example `format!("vaults:{program_id}")`.
 - **Uniqueness:** keys must be unique across a host.
 - **`decode` input:** it receives the program id whose page is being decoded.
+
+## Prices and enrichment
+
+The runtime owns `price_candles (mint, "interval", bucket_ts, close_usd, source)`, analytics' DDL created `IF NOT EXISTS` (runtime migration 2), so an analytics database or a crate baseline that created it first is adopted. A program crate no longer needs to create it.
+
+Every `ENRICH_INTERVAL_SECS` (and once after `backfill`), `sampler::Enricher::enrich_once` runs:
+1. **Feeds** (`prices::FeedSync`): each `coinbase:` mint on its own (one failing is logged, the rest continue), then `const:` mints as one candle at epoch. A Coinbase mint resumes at its newest candle with source `pyth` or `coinbase`, inclusive (Pyth history from before 2026-08-26 stays; Coinbase takes over from its last bucket). A cold mint starts one day before the minimum of every indexer's `earliest_activity`, or seven days back when none has activity. Requests are chunked to ten days.
+2. **Derived prices:** every indexer's `priced_mints`, then every indexer's `derive_prices(ctx, &PriceCtx { feed_mints, claimed_mints })` in registration order, where `claimed_mints` is the union of the *other* indexers' claims. An indexer never reads another's tables to learn which mints to leave alone. If any `priced_mints` fails, no indexer derives that pass. Register an indexer whose prices route through another's before it (CLAMM before vaults, as analytics ordered pool routes before vault shares).
+3. **Enrich:** every indexer's `enrich`, which stamps USD from the candles. `enrich::drain(what, || batch())` runs a stamping batch until it stamps nothing; `enrich::BATCH` is analytics' 10 000.
+
+Read side, over series a caller loaded: `prices::{Prices, Spine, obs_at, obs_at_or_first, cum_at}`, analytics' types and at-or-before rules.
+
+## Day exports
+
+`export` holds the pieces of a day export served from one snapshot (arch-prime-analytics' `GET /v1/export/days/{day}`); the host owns the route, the day window, the row cap and the body:
+- `export::snapshot(&pool)` opens the `REPEATABLE READ, READ ONLY` transaction.
+- `Completeness::load(&mut tx)` reads `replay_requests`, `checkpoints` and `scan_marks`; `.incomplete(end)` is analytics' runtime rule (replay pending, nothing ingested, a mark missing, short of `end`, voided by a rewind, or below its checkpoint) with its messages.
+- `export::day_incomplete(&mut tx, &indexers, &completeness, end)`: the runtime's reason, else the first indexer's `day_incomplete`.
+- `export::day_facts(&mut tx, &indexers, start, end, cap)`: every indexer's `DayFacts` merged. `insert_rows` counts toward the cap, `insert_reference` does not; a key two indexers set is refused.
+- `export::day_holdings(...)`: every indexer's `Holding`s, sorted by `(wallet, venue, address, side)` and cut to `cap`.
+
+## Portfolio legs and conversions
+
+`portfolio::PortfolioLeg { start(), mints(), value_at(&Prices, at) -> LegValue { assets_usd, liabilities_usd } }` is what a program crate implements for its positions so a cross-program host composes them. `portfolio::Conversion { txid, ix_path, kind: ConversionKind::{Swap, Wrap}, pool, mint_in, mint_out, amount_in, amount_out, fee_atoms }` is one conversion a crate reads out of a transaction; `Swap` is analytics' `venue == "clamm"`, `Wrap` its `venue == "vault"`.
 
 ## Minimal implementor
 

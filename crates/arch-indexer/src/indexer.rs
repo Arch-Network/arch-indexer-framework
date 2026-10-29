@@ -3,9 +3,12 @@
 use crate::db::{PgPool, PgTransaction};
 use crate::event::IndexerEvent;
 use crate::explorer::ExplorerClient;
+use crate::export::{DayFacts, Holding};
 use crate::input::IndexedTx;
+use crate::prices::PriceCtx;
 use crate::runner::Runner;
 use axum::Router;
+use chrono::{DateTime, Utc};
 use sqlx::migrate::Migrator;
 use std::future::Future;
 use std::pin::Pin;
@@ -13,7 +16,8 @@ use std::pin::Pin;
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// What the ingest-side hooks (`prepare`, `sample`, `on_activity`,
-/// `background`) work with: the unbounded ingest pool and the indexer client.
+/// `priced_mints`, `derive_prices`, `enrich`, `background`) work with: the
+/// unbounded ingest pool and the indexer client.
 #[derive(Clone)]
 pub struct Ctx {
     pub pool: PgPool,
@@ -153,10 +157,47 @@ pub trait ProgramIndexer: Send + Sync + 'static {
         async { Ok(0) }
     }
 
-    /// Derivation over rows already stored (flows, rates, any column filled
-    /// after ingest), every `ENRICH_INTERVAL_SECS` and once at the end of a
-    /// `backfill`, so a fresh backfill is immediately queryable. An error is
-    /// logged; the next tick runs regardless.
+    /// The earliest instant this indexer holds activity for (its first
+    /// event's `ts`), `None` while it holds none. The minimum across a
+    /// host's indexers anchors a price feed's cold start: the runtime fetches
+    /// candles from a day before it.
+    fn earliest_activity(
+        &self,
+        pool: &PgPool,
+    ) -> impl Future<Output = anyhow::Result<Option<DateTime<Utc>>>> + Send {
+        let _ = pool;
+        async { Ok(None) }
+    }
+
+    /// The mints this indexer's [`Self::derive_prices`] prices (e.g. every
+    /// vault share mint), lowercase hex. Every other indexer receives them in
+    /// [`PriceCtx::claimed_mints`] and leaves them alone, so no indexer reads
+    /// another's tables to learn them. Asked at the start of every enrich
+    /// pass.
+    fn priced_mints(&self, ctx: &Ctx) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send {
+        let _ = ctx;
+        async { Ok(Vec::new()) }
+    }
+
+    /// Write `price_candles` for mints this indexer prices from its own state
+    /// (a pool route, a vault's NAV), never one in `prices.feed_mints` or
+    /// `prices.claimed_mints`. Runs every enrich pass after the runtime's
+    /// feed sync, in registration order, before any indexer's `enrich`. An
+    /// error is logged; the other indexers still derive.
+    fn derive_prices(
+        &self,
+        ctx: &Ctx,
+        prices: &PriceCtx,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
+        let _ = (ctx, prices);
+        async { Ok(()) }
+    }
+
+    /// Derivation over rows already stored (flows, rates, USD stamps from
+    /// `price_candles`, any column filled after ingest), every
+    /// `ENRICH_INTERVAL_SECS` after every indexer's `derive_prices`, and once
+    /// at the end of a `backfill`, so a fresh backfill is immediately
+    /// queryable. An error is logged; the next tick runs regardless.
     fn enrich(&self, ctx: &Ctx) -> impl Future<Output = anyhow::Result<()>> + Send {
         let _ = ctx;
         async { Ok(()) }
@@ -174,7 +215,9 @@ pub trait ProgramIndexer: Send + Sync + 'static {
         Routes::default()
     }
 
-    /// Append Prometheus text-format lines to `/metrics`.
+    /// Append Prometheus text-format lines to `/metrics`. The runtime groups
+    /// the whole scrape by metric family and keeps one `# HELP`/`# TYPE` per
+    /// family, so two indexers may each declare a family they share.
     fn metrics(
         &self,
         pool: &PgPool,
@@ -182,6 +225,46 @@ pub trait ProgramIndexer: Send + Sync + 'static {
     ) -> impl Future<Output = anyhow::Result<()>> + Send {
         let _ = (pool, out);
         async { Ok(()) }
+    }
+
+    /// Why the day ending at `end` is not yet complete in this indexer's
+    /// data beyond the runtime's checks (e.g. a vault share ledger not
+    /// reconciled past `end`), or `None`. Reads through `tx`, the export's
+    /// one snapshot ([`crate::export`]).
+    fn day_incomplete(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        end: DateTime<Utc>,
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
+        let _ = (tx, end);
+        async { Ok(None) }
+    }
+
+    /// This indexer's facts of `[start, end)` for a day export, by top-level
+    /// key, each query limited to `cap` rows. Reads through `tx`.
+    fn day_facts(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> impl Future<Output = anyhow::Result<DayFacts>> + Send {
+        let _ = (tx, start, end, cap);
+        async { Ok(DayFacts::default()) }
+    }
+
+    /// What each wallet held in this indexer's venues over `[start, end)`,
+    /// rows with `close` and `average` both 0 left out, the first `cap` in
+    /// `(wallet, venue, address, side)` order. Reads through `tx`.
+    fn day_holdings(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> impl Future<Output = anyhow::Result<Vec<Holding>>> + Send {
+        let _ = (tx, start, end, cap);
+        async { Ok(Vec::new()) }
     }
 }
 
@@ -209,6 +292,16 @@ pub trait DynIndexer: Send + Sync + 'static {
     fn prepare<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<()>>;
     fn sample<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<()>>;
     fn on_activity<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<u64>>;
+    fn earliest_activity<'a>(
+        &'a self,
+        pool: &'a PgPool,
+    ) -> BoxFuture<'a, anyhow::Result<Option<DateTime<Utc>>>>;
+    fn priced_mints<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<Vec<String>>>;
+    fn derive_prices<'a>(
+        &'a self,
+        ctx: &'a Ctx,
+        prices: &'a PriceCtx,
+    ) -> BoxFuture<'a, anyhow::Result<()>>;
     fn enrich<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<()>>;
     fn background(&self, ctx: &Ctx) -> Vec<BackgroundTask>;
     fn routes(&self, state: &ApiState) -> Routes;
@@ -217,6 +310,25 @@ pub trait DynIndexer: Send + Sync + 'static {
         pool: &'a PgPool,
         out: &'a mut String,
     ) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn day_incomplete<'a>(
+        &'a self,
+        tx: &'a mut PgTransaction<'static>,
+        end: DateTime<Utc>,
+    ) -> BoxFuture<'a, anyhow::Result<Option<String>>>;
+    fn day_facts<'a>(
+        &'a self,
+        tx: &'a mut PgTransaction<'static>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> BoxFuture<'a, anyhow::Result<DayFacts>>;
+    fn day_holdings<'a>(
+        &'a self,
+        tx: &'a mut PgTransaction<'static>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<Holding>>>;
 }
 
 impl<T: ProgramIndexer> DynIndexer for T {
@@ -259,6 +371,22 @@ impl<T: ProgramIndexer> DynIndexer for T {
     fn on_activity<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<u64>> {
         Box::pin(ProgramIndexer::on_activity(self, ctx))
     }
+    fn earliest_activity<'a>(
+        &'a self,
+        pool: &'a PgPool,
+    ) -> BoxFuture<'a, anyhow::Result<Option<DateTime<Utc>>>> {
+        Box::pin(ProgramIndexer::earliest_activity(self, pool))
+    }
+    fn priced_mints<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<Vec<String>>> {
+        Box::pin(ProgramIndexer::priced_mints(self, ctx))
+    }
+    fn derive_prices<'a>(
+        &'a self,
+        ctx: &'a Ctx,
+        prices: &'a PriceCtx,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(ProgramIndexer::derive_prices(self, ctx, prices))
+    }
     fn enrich<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(ProgramIndexer::enrich(self, ctx))
     }
@@ -274,6 +402,31 @@ impl<T: ProgramIndexer> DynIndexer for T {
         out: &'a mut String,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(ProgramIndexer::metrics(self, pool, out))
+    }
+    fn day_incomplete<'a>(
+        &'a self,
+        tx: &'a mut PgTransaction<'static>,
+        end: DateTime<Utc>,
+    ) -> BoxFuture<'a, anyhow::Result<Option<String>>> {
+        Box::pin(ProgramIndexer::day_incomplete(self, tx, end))
+    }
+    fn day_facts<'a>(
+        &'a self,
+        tx: &'a mut PgTransaction<'static>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> BoxFuture<'a, anyhow::Result<DayFacts>> {
+        Box::pin(ProgramIndexer::day_facts(self, tx, start, end, cap))
+    }
+    fn day_holdings<'a>(
+        &'a self,
+        tx: &'a mut PgTransaction<'static>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        cap: i64,
+    ) -> BoxFuture<'a, anyhow::Result<Vec<Holding>>> {
+        Box::pin(ProgramIndexer::day_holdings(self, tx, start, end, cap))
     }
 }
 

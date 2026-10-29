@@ -5,6 +5,7 @@
 pub mod cache;
 pub mod chart;
 pub mod paging;
+pub mod prometheus;
 pub mod routes;
 
 use crate::build_info::BuildInfo;
@@ -59,6 +60,8 @@ pub struct HostState {
     /// Every checkpoint key this host's indexers own; the sync and metrics
     /// views report only these, since other services may share the database.
     pub checkpoint_keys: Arc<Vec<String>>,
+    /// `METRICS_PREFIX`: the head of the runtime's own metric names.
+    pub metrics_prefix: Arc<str>,
 }
 
 /// How long a request waits for a permit before it is shed. A permit is held
@@ -135,6 +138,7 @@ pub fn router(
         network: config.network().to_string(),
         indexers: indexers.iter().cloned().collect(),
         checkpoint_keys: Arc::new(checkpoint_keys),
+        metrics_prefix: config.metrics_prefix.as_str().into(),
     };
 
     let response_cache = cache::ResponseCache::new(config.cache_ttl_secs);

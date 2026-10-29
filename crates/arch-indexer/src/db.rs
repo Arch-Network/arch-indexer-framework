@@ -19,7 +19,7 @@ pub type PgTransaction<'c> = sqlx::Transaction<'c, sqlx::Postgres>;
 pub const RUNTIME_NAMESPACE: &str = "runtime";
 
 /// The runtime's shared tables: checkpoints, scan_marks, replay_requests,
-/// mint_decimals, decoder_unknowns.
+/// mint_decimals, decoder_unknowns, price_candles.
 pub static RUNTIME_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 pub const DEFAULT_MAX_CONNECTIONS: u32 = 10;

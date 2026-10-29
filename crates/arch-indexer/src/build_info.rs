@@ -1,5 +1,5 @@
 //! What the running binary is, so an incident can be traced to a build.
-//! Exposed on `GET /v1/version`, as the `program_indexer_build_info` gauge and
+//! Exposed on `GET /v1/version`, as the `<METRICS_PREFIX>_build_info` gauge and
 //! as the `x-indexer-version` header on every response.
 //!
 //! Captured in the *binary* crate by [`crate::build_info!`], since this

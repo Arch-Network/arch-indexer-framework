@@ -472,19 +472,7 @@ pub async fn fake_indexer(upstream: Arc<Mutex<Upstream>>) -> String {
 
 pub fn config(indexer_base_url: String, database_url: String) -> arch_indexer::Config {
     arch_indexer::Config {
-        database_url,
-        indexer_base_url,
-        indexer_api_key: None,
-        indexer_network: None,
         api_bind_addr: "127.0.0.1:0".into(),
-        tail_interval_secs: 5,
-        sample_interval_secs: 300,
-        enrich_interval_secs: 60,
-        export_page_limit: 1000,
-        ingest_confirmation_depth: 0,
-        ingest_end_height: None,
-        cache_ttl_secs: 30,
-        query_concurrency: 3,
-        per_address_concurrency: 2,
+        ..arch_indexer::Config::new(database_url, indexer_base_url)
     }
 }
