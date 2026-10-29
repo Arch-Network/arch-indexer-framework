@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-/// Normalized decoder input: the shape of one transaction in the indexer's
+/// Normalized decoder input: the shape of one transaction in arch-rust-indexer's
 /// bulk export (`GET /api/v1/programs/{id}/transactions/export`), which
-/// [`crate::indexer_client::IndexerClient`] deserializes. Decoders never see raw
+/// `arch_indexer::explorer::ExplorerClient` deserializes. Decoders never see raw
 /// indexer JSON.
 #[derive(Debug, Clone, Deserialize)]
 pub struct IndexedTx {

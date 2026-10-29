@@ -3,10 +3,10 @@
 //! data revision, and delete-by-txid.
 mod common;
 
-use arch_program_indexer::axum::body::Body;
-use arch_program_indexer::axum::http::{Request, StatusCode};
-use arch_program_indexer::sampler::Sampler;
-use arch_program_indexer::{build_info, checkpoints, DynIndexer, Host, Mode};
+use arch_indexer::axum::body::Body;
+use arch_indexer::axum::http::{Request, StatusCode};
+use arch_indexer::sampler::Sampler;
+use arch_indexer::{build_info, checkpoints, DynIndexer, Host, Mode};
 use common::*;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
@@ -24,7 +24,7 @@ fn host(upstream: &str, url: &str, indexer: ExampleIndexer) -> Host {
 }
 
 async fn get(
-    app: &arch_program_indexer::axum::Router,
+    app: &arch_indexer::axum::Router,
     uri: &str,
 ) -> (StatusCode, Value, Vec<(String, String)>) {
     let res = app
@@ -38,7 +38,7 @@ async fn get(
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string()))
         .collect();
-    let body = arch_program_indexer::axum::body::to_bytes(res.into_body(), 1 << 20)
+    let body = arch_indexer::axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
         .unwrap();
     let body = serde_json::from_slice(&body)
@@ -54,7 +54,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 }
 
 #[tokio::test]
-#[ignore = "requires PostgreSQL via PROGRAM_INDEXER_TEST_DATABASE_URL"]
+#[ignore = "requires PostgreSQL via ARCH_INDEXER_TEST_DATABASE_URL"]
 async fn an_example_indexer_runs_end_to_end() {
     let test = TestDb::new("example_indexer_test").await;
     let pool = test.pool.clone();
@@ -299,7 +299,7 @@ async fn an_example_indexer_runs_end_to_end() {
 
     let (status, body, _) = get(&app, "/v1/version").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["service"], json!("arch-program-indexer"));
+    assert_eq!(body["service"], json!("arch-indexer"));
     assert_eq!(body["network"], json!("default"));
     assert_eq!(
         body["schema_versions"],
@@ -379,7 +379,7 @@ fn a_host_refuses_colliding_or_malformed_indexers() {
 /// `on_activity`, the sampler, background tasks and the HTTP API in one
 /// process.
 #[tokio::test]
-#[ignore = "requires PostgreSQL via PROGRAM_INDEXER_TEST_DATABASE_URL"]
+#[ignore = "requires PostgreSQL via ARCH_INDEXER_TEST_DATABASE_URL"]
 async fn the_all_mode_ingests_samples_and_serves() {
     let test = TestDb::new("all_mode_test").await;
     let (program_hex, _) = program(0x22);

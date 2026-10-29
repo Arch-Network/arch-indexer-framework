@@ -2,19 +2,19 @@
 //! an in-process fake of the arch-rust-indexer API, and `ExampleIndexer`, a
 //! minimal `ProgramIndexer` exercising every hook.
 //!
-//! Run with PROGRAM_INDEXER_TEST_DATABASE_URL set to a disposable database:
+//! Run with ARCH_INDEXER_TEST_DATABASE_URL set to a disposable database:
 //!   cargo test -- --ignored
 #![allow(dead_code)]
 
-use arch_program_indexer::axum::{
+use arch_indexer::axum::{
     extract::{Path, State},
     routing::get,
     Json, Router,
 };
-use arch_program_indexer::http::{internal, normalize_address, ApiResult};
-use arch_program_indexer::input::IndexedTx;
-use arch_program_indexer::sqlx::migrate::Migrator;
-use arch_program_indexer::{
+use arch_indexer::http::{internal, normalize_address, ApiResult};
+use arch_indexer::input::IndexedTx;
+use arch_indexer::sqlx::migrate::Migrator;
+use arch_indexer::{
     ApiState, BackgroundTask, ByteReader, Ctx, IndexerEvent, PgPool, PgTransaction, ProgramIndexer,
     Routes, UnknownInstruction,
 };
@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub const DB_ENV: &str = "PROGRAM_INDEXER_TEST_DATABASE_URL";
+pub const DB_ENV: &str = "ARCH_INDEXER_TEST_DATABASE_URL";
 
 /// A fresh schema on the test database, removed by [`TestDb::drop_schema`].
 pub struct TestDb {
@@ -37,7 +37,7 @@ pub struct TestDb {
 impl TestDb {
     pub async fn new(prefix: &str) -> Self {
         let base = std::env::var(DB_ENV).expect("isolated test DB required");
-        let admin = arch_program_indexer::db::connect(&base).await.unwrap();
+        let admin = arch_indexer::db::connect(&base).await.unwrap();
         let schema = format!("{prefix}_{}", std::process::id());
         sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
             .execute(&admin)
@@ -49,7 +49,7 @@ impl TestDb {
             .unwrap();
         let sep = if base.contains('?') { '&' } else { '?' };
         let url = format!("{base}{sep}options=-c%20search_path%3D{schema}");
-        let pool = arch_program_indexer::db::connect(&url).await.unwrap();
+        let pool = arch_indexer::db::connect(&url).await.unwrap();
         Self {
             admin,
             pool,
@@ -60,9 +60,7 @@ impl TestDb {
 
     /// Another pool on the schema, as the host's serving pool.
     pub async fn another_pool(&self) -> PgPool {
-        arch_program_indexer::db::connect_serving(&self.url)
-            .await
-            .unwrap()
+        arch_indexer::db::connect_serving(&self.url).await.unwrap()
     }
 
     pub async fn drop_schema(self) {
@@ -311,7 +309,7 @@ async fn transfers(State(state): State<ApiState>) -> ApiResult {
 
 async fn account(Path(addr): Path<String>) -> ApiResult {
     let addr = normalize_address(&addr).ok_or((
-        arch_program_indexer::axum::http::StatusCode::BAD_REQUEST,
+        arch_indexer::axum::http::StatusCode::BAD_REQUEST,
         "addr must be a 32-byte pubkey".to_string(),
     ))?;
     Ok(Json(json!({ "addr": addr })))
@@ -418,7 +416,7 @@ pub struct Upstream {
 /// Serve `upstream` as the arch-rust-indexer API on a local port; returns
 /// its base URL.
 pub async fn fake_indexer(upstream: Arc<Mutex<Upstream>>) -> String {
-    use arch_program_indexer::axum::extract::{Query, Request};
+    use arch_indexer::axum::extract::{Query, Request};
     use std::collections::HashMap;
 
     async fn export(
@@ -443,14 +441,14 @@ pub async fn fake_indexer(upstream: Arc<Mutex<Upstream>>) -> String {
         State(up): State<Arc<Mutex<Upstream>>>,
         Path(txid): Path<String>,
         req: Request,
-    ) -> Result<Json<Value>, arch_program_indexer::axum::http::StatusCode> {
+    ) -> Result<Json<Value>, arch_indexer::axum::http::StatusCode> {
         let mut up = up.lock().unwrap();
         up.requests.push(req.uri().to_string());
         up.logs
             .get(&txid)
             .cloned()
             .map(Json)
-            .ok_or(arch_program_indexer::axum::http::StatusCode::NOT_FOUND)
+            .ok_or(arch_indexer::axum::http::StatusCode::NOT_FOUND)
     }
     async fn blocks(State(up): State<Arc<Mutex<Upstream>>>, req: Request) -> Json<Value> {
         let mut up = up.lock().unwrap();
@@ -468,16 +466,12 @@ pub async fn fake_indexer(upstream: Arc<Mutex<Upstream>>) -> String {
         .with_state(upstream);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        arch_program_indexer::axum::serve(listener, app)
-            .await
-            .unwrap()
-    });
+    tokio::spawn(async move { arch_indexer::axum::serve(listener, app).await.unwrap() });
     url
 }
 
-pub fn config(indexer_base_url: String, database_url: String) -> arch_program_indexer::Config {
-    arch_program_indexer::Config {
+pub fn config(indexer_base_url: String, database_url: String) -> arch_indexer::Config {
+    arch_indexer::Config {
         database_url,
         indexer_base_url,
         indexer_api_key: None,

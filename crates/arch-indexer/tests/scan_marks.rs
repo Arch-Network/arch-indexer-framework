@@ -1,12 +1,12 @@
 //! Real-Postgres check of `checkpoints::mark_scanned`.
 mod common;
 
-use arch_program_indexer::{checkpoints, db};
+use arch_indexer::{checkpoints, db};
 use chrono::{DateTime, Utc};
 use common::TestDb;
 
 #[tokio::test]
-#[ignore = "requires PostgreSQL via PROGRAM_INDEXER_TEST_DATABASE_URL"]
+#[ignore = "requires PostgreSQL via ARCH_INDEXER_TEST_DATABASE_URL"]
 async fn a_scan_mark_takes_the_current_checkpoint_and_replaces_the_last_mark() {
     let test = TestDb::new("scan_marks_test").await;
     let pool = test.pool.clone();

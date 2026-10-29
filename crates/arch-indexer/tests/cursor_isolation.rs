@@ -1,15 +1,15 @@
 //! Real-Postgres check that one refused cursor does not stop the others.
 mod common;
 
-use arch_program_indexer::indexer_client::IndexerClient;
-use arch_program_indexer::runner::Runner;
-use arch_program_indexer::{checkpoints, db, DynIndexer};
+use arch_indexer::explorer::ExplorerClient;
+use arch_indexer::runner::Runner;
+use arch_indexer::{checkpoints, db, DynIndexer};
 use common::{ExampleIndexer, TestDb};
 use std::io::{Read, Write};
 use std::sync::Arc;
 
 #[tokio::test]
-#[ignore = "requires PostgreSQL via PROGRAM_INDEXER_TEST_DATABASE_URL"]
+#[ignore = "requires PostgreSQL via ARCH_INDEXER_TEST_DATABASE_URL"]
 async fn a_refused_cursor_does_not_stop_the_others() {
     let test = TestDb::new("cursor_isolation_test").await;
     let pool = test.pool.clone();
@@ -65,7 +65,7 @@ async fn a_refused_cursor_does_not_stop_the_others() {
         Arc::new(ExampleIndexer::new(vec![refused.clone(), served.clone()]));
     let runner = Runner {
         pool: pool.clone(),
-        client: IndexerClient::new(format!("http://{address}"), None, None),
+        client: ExplorerClient::new(format!("http://{address}"), None, None),
         indexers: vec![indexer],
         page_limit: 1000,
         confirmation_depth: 0,

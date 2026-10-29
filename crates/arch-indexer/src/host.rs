@@ -4,8 +4,8 @@
 use crate::build_info::BuildInfo;
 use crate::config::Config;
 use crate::db::{self, PgPool};
+use crate::explorer::ExplorerClient;
 use crate::indexer::{validate, ApiState, BoxFuture, Ctx, DynIndexer};
-use crate::indexer_client::IndexerClient;
 use crate::runner::Runner;
 use crate::sampler::{Enricher, Sampler};
 use anyhow::Context;
@@ -60,9 +60,9 @@ impl Mode {
 /// ```text
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
-///     arch_program_indexer::run(
-///         arch_program_indexer::build_info!(),
-///         arch_program_indexer::Config::from_env()?,
+///     arch_indexer::run(
+///         arch_indexer::build_info!(),
+///         arch_indexer::Config::from_env()?,
 ///         vec![Box::new(MyIndexer::from_env()?)],
 ///     )
 ///     .await
@@ -104,8 +104,8 @@ impl Host {
         })
     }
 
-    pub fn client(&self) -> IndexerClient {
-        IndexerClient::new(
+    pub fn client(&self) -> ExplorerClient {
+        ExplorerClient::new(
             self.config.indexer_base_url.clone(),
             self.config.indexer_api_key.clone(),
             self.config.indexer_network.clone(),

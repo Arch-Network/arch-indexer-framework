@@ -14,7 +14,7 @@ use std::time::Duration;
 const ERROR_BODY_BYTES: usize = 200;
 
 #[derive(Clone)]
-pub struct IndexerClient {
+pub struct ExplorerClient {
     /// Sends `X-API-Key` on every request when a key is configured: the
     /// explorer charges an unkeyed request, REST included, to its per-IP
     /// anonymous limit. Follows no redirect, because reqwest strips only its
@@ -89,7 +89,7 @@ pub struct ShareTransfer {
 /// four fifths of them.
 const MAX_TRANSFER_PAGES: u32 = 500;
 
-impl IndexerClient {
+impl ExplorerClient {
     /// `network`: None targets the indexer's default (un-prefixed) routes —
     /// today's testnet deployment. Some("mainnet") targets the network-scoped
     /// `/api/v1/{network}/…` variants the indexer serves for every endpoint
@@ -630,12 +630,12 @@ mod tests {
 
     #[test]
     fn api_root_scopes_paths_by_network() {
-        let plain = IndexerClient::new("https://x.example/".into(), None, None);
+        let plain = ExplorerClient::new("https://x.example/".into(), None, None);
         assert_eq!(plain.api_root, "https://x.example/api/v1");
-        let scoped = IndexerClient::new("https://x.example".into(), None, Some("mainnet".into()));
+        let scoped = ExplorerClient::new("https://x.example".into(), None, Some("mainnet".into()));
         assert_eq!(scoped.api_root, "https://x.example/api/v1/mainnet");
         // Empty network behaves like None (env set to "").
-        let empty = IndexerClient::new("https://x.example".into(), None, Some(String::new()));
+        let empty = ExplorerClient::new("https://x.example".into(), None, Some(String::new()));
         assert_eq!(empty.api_root, "https://x.example/api/v1");
     }
 
@@ -703,7 +703,7 @@ mod tests {
                 (200, body.into())
             })
             .await;
-            let client = IndexerClient::new(url, key.map(String::from), Some("mainnet".into()));
+            let client = ExplorerClient::new(url, key.map(String::from), Some("mainnet".into()));
             client.export_page("ab", 0, None, 10).await.unwrap();
             client.program_accounts_by_prefix("ab", None).await.unwrap();
             let heads = server.await.unwrap();
@@ -740,7 +740,7 @@ mod tests {
         })
         .await;
         std::env::set_var("ARCH_RPC_URL", format!("{url}/chain"));
-        let client = IndexerClient::new(url, Some("k-123".into()), None);
+        let client = ExplorerClient::new(url, Some("k-123".into()), None);
         assert_eq!(
             client.read_account_data("ab").await.unwrap(),
             Some(vec![1, 2])
@@ -794,7 +794,7 @@ mod tests {
             (200, page.to_string())
         })
         .await;
-        let client = IndexerClient::new(url, None, Some("mainnet".into()));
+        let client = ExplorerClient::new(url, None, Some("mainnet".into()));
         let holders = client.token_holders("ab").await.unwrap();
         assert_eq!(
             holders,
@@ -841,7 +841,7 @@ mod tests {
             (200, page.to_string())
         })
         .await;
-        let client = IndexerClient::new(url, None, Some("mainnet".into()));
+        let client = ExplorerClient::new(url, None, Some("mainnet".into()));
         let moved = |txid: &str, ix_path: &str, source: Option<&str>| ShareTransfer {
             txid: txid.into(),
             ix_path: ix_path.into(),
@@ -878,7 +878,7 @@ mod tests {
             )
         })
         .await;
-        let client = IndexerClient::new(url, None, Some("mainnet".into()));
+        let client = ExplorerClient::new(url, None, Some("mainnet".into()));
         let err = client.token_transfers("ab").await.unwrap_err();
         assert_eq!(err.to_string(), "transfer t1 0 has no block");
         server.await.unwrap();
@@ -889,7 +889,7 @@ mod tests {
         const BODY_PREFIX: &str = r#"{"error":"rate_limit_exceeded","pad":""#;
         let (url, server) =
             fake_server(1, |_| (429, format!("{BODY_PREFIX}{}", "x".repeat(300)))).await;
-        let client = IndexerClient::new(url, Some("k-123".into()), None);
+        let client = ExplorerClient::new(url, Some("k-123".into()), None);
         let err = client.latest_block(None).await.unwrap_err().to_string();
         server.await.unwrap();
         assert!(err.contains("429 Too Many Requests"), "{err}");
@@ -905,7 +905,7 @@ mod tests {
             (200, body.into())
         })
         .await;
-        let client = IndexerClient::new(url, None, None);
+        let client = ExplorerClient::new(url, None, None);
         let block = client.latest_block(Some(90)).await.unwrap();
         assert_eq!(block.height, 90);
         assert_eq!(block.timestamp.to_rfc3339(), "2026-10-14T00:01:02+00:00");
@@ -920,7 +920,7 @@ mod tests {
     #[tokio::test]
     async fn a_redirect_is_refused_instead_of_carrying_the_key_to_another_host() {
         let (url, server) = fake_server(1, |_| (302, "http://localhost:9/elsewhere".into())).await;
-        let client = IndexerClient::new(url, Some("k-123".into()), None);
+        let client = ExplorerClient::new(url, Some("k-123".into()), None);
         let err = client.latest_block(None).await.unwrap_err().to_string();
         server.await.unwrap();
         assert!(err.contains("302 Found"), "{err}");

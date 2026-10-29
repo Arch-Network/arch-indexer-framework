@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-/// What a [`crate::ProgramIndexer`]'s decoder emits. A program defines one
+/// What an `arch_indexer::ProgramIndexer`'s decoder emits. A program defines one
 /// event type (usually an enum over its rows) and implements this for it.
 pub trait IndexerEvent: Send + Sync + 'static {
     /// Label the runner counts the event under in its per-pass log line
@@ -20,7 +20,7 @@ pub trait IndexerEvent: Send + Sync + 'static {
 /// persists it to `decoder_unknowns`, in the page's transaction.
 #[derive(Debug, Clone)]
 pub struct UnknownInstruction {
-    /// The emitting indexer's [`crate::ProgramIndexer::id`]; `/metrics` and
+    /// The emitting indexer's `arch_indexer::ProgramIndexer::id`; `/metrics` and
     /// the per-host views select markers by it.
     pub decoder: &'static str,
     /// What was not understood, in the decoder's own vocabulary (a hex

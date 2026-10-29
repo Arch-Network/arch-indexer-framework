@@ -2,7 +2,7 @@
 
 use crate::db::{PgPool, PgTransaction};
 use crate::event::IndexerEvent;
-use crate::indexer_client::IndexerClient;
+use crate::explorer::ExplorerClient;
 use crate::input::IndexedTx;
 use crate::runner::Runner;
 use axum::Router;
@@ -17,7 +17,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[derive(Clone)]
 pub struct Ctx {
     pub pool: PgPool,
-    pub client: IndexerClient,
+    pub client: ExplorerClient,
 }
 
 /// What route handlers work with: the serving pool (15 s statement timeout,
@@ -25,7 +25,7 @@ pub struct Ctx {
 #[derive(Clone)]
 pub struct ApiState {
     pub pool: PgPool,
-    pub client: IndexerClient,
+    pub client: ExplorerClient,
 }
 
 /// An indexer's routes, by load domain. Each group is mounted behind the

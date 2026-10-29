@@ -1,7 +1,7 @@
 //! Real-Postgres checks of the namespaced migration runner.
 mod common;
 
-use arch_program_indexer::{build_info, db, Host};
+use arch_indexer::{build_info, db, Host};
 use common::{config, ExampleIndexer, OtherIndexer, TestDb};
 
 fn host(url: &str) -> Host {
@@ -20,7 +20,7 @@ fn host(url: &str) -> Host {
 /// database: each set is recorded under its own namespace, after the
 /// runtime's, and a second boot applies nothing.
 #[tokio::test]
-#[ignore = "requires PostgreSQL via PROGRAM_INDEXER_TEST_DATABASE_URL"]
+#[ignore = "requires PostgreSQL via ARCH_INDEXER_TEST_DATABASE_URL"]
 async fn indexers_number_their_migrations_independently() {
     let test = TestDb::new("migrations_test").await;
     let pool = test.pool.clone();
@@ -123,7 +123,7 @@ async fn indexers_number_their_migrations_independently() {
 }
 
 fn other_v1_checksum() -> Vec<u8> {
-    use arch_program_indexer::ProgramIndexer;
+    use arch_indexer::ProgramIndexer;
     OtherIndexer
         .migrator()
         .iter()

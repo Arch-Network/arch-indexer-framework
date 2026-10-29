@@ -11,8 +11,8 @@
 
 use crate::db::PgPool;
 use crate::event::IndexerEvent;
+use crate::explorer::ExplorerClient;
 use crate::indexer::{Ctx, DynIndexer, ProgramIndexer};
-use crate::indexer_client::IndexerClient;
 use crate::{checkpoints, store};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use std::time::Duration;
 
 pub struct Runner {
     pub pool: PgPool,
-    pub client: IndexerClient,
+    pub client: ExplorerClient,
     pub indexers: Vec<Arc<dyn DynIndexer>>,
     pub page_limit: u32,
     /// Ingest only up to `tip - confirmation_depth`. 0 (the default) ingests to

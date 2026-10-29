@@ -1,0 +1,23 @@
+[package]
+name = "arch-indexer-core"
+description = "Decoder-side types for Arch program indexers: the arch-rust-indexer transaction export, log attribution, byte reader and Anchor discriminators"
+keywords = ["arch", "bitcoin", "indexer", "decoder", "blockchain"]
+categories = ["parser-implementations", "encoding"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bs58.workspace = true
+chrono.workspace = true
+hex.workspace = true
+serde.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

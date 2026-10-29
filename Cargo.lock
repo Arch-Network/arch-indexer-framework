@@ -33,10 +33,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "arch-program-indexer"
+name = "arch-indexer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arch-indexer-core",
  "axum",
  "bigdecimal",
  "bs58",
@@ -45,13 +46,26 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "sqlx",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "arch-indexer-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bs58",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tracing",
 ]
 
 [[package]]
